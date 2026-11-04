@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1b1f3b">
+<title>미로찾기</title>
+<style>
+  :root {
+    --bg: #1b1f3b;
+    --panel: #262b52;
+    --wall: #e8ecff;
+    --floor: #2f3566;
+    --player: #ffcc33;
+    --exit: #38e08c;
+    --trail: rgba(255, 204, 51, 0.22);
+    --accent: #7c8cff;
+    --text: #f4f6ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    width: 100%; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    overflow: hidden; overscroll-behavior: none;
+    touch-action: none; user-select: none; -webkit-user-select: none;
+  }
+  #app {
+    display: flex; flex-direction: column;
+    width: 100vw; height: 100vh; height: 100dvh;
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+             max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    gap: 8px;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;
+  }
+  h1 { font-size: 20px; font-weight: 800; letter-spacing: -0.5px; }
+  .levels { display: flex; gap: 4px; background: var(--panel); padding: 4px; border-radius: 12px; }
+  .levels button, .btn {
+    border: 0; border-radius: 9px; padding: 8px 12px;
+    font: inherit; font-size: 14px; font-weight: 700; cursor: pointer;
+    background: transparent; color: var(--text); opacity: .7;
+  }
+  .levels button.active { background: var(--accent); opacity: 1; }
+  .btn { background: var(--panel); opacity: 1; }
+  .btn:active, .levels button:active { transform: scale(.96); }
+  .status { display: flex; align-items: center; gap: 8px; }
+  #timer {
+    font-variant-numeric: tabular-nums; font-weight: 800; font-size: 18px;
+    background: var(--panel); padding: 6px 12px; border-radius: 10px; min-width: 84px; text-align: center;
+  }
+  #stage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; position: relative; }
+  canvas { display: block; border-radius: 10px; box-shadow: 0 10px 40px rgba(0,0,0,.35); }
+  #hint { text-align: center; font-size: 13px; opacity: .6; }
+  #hint .mo { display: none; }
+  @media (pointer: coarse) { #hint .pc { display: none; } #hint .mo { display: inline; } }
+
+  #overlay {
+    position: fixed; inset: 0; display: none; align-items: center; justify-content: center;
+    background: rgba(10, 12, 30, .7); backdrop-filter: blur(4px); z-index: 10; padding: 20px;
+  }
+  #overlay.show { display: flex; animation: fade .25s ease; }
+  .card {
+    background: var(--panel); border-radius: 20px; padding: 28px 24px; text-align: center;
+    width: min(360px, 100%); box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    animation: pop .35s cubic-bezier(.2,1.4,.4,1);
+  }
+  .card .emoji { font-size: 56px; line-height: 1; }
+  .card h2 { font-size: 26px; margin: 12px 0 6px; }
+  .card p { opacity: .8; margin-bottom: 4px; }
+  .card .time { font-size: 40px; font-weight: 900; color: var(--player); margin: 10px 0 4px; font-variant-numeric: tabular-nums; }
+  .card .best { font-size: 14px; opacity: .7; margin-bottom: 18px; }
+  .card .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .card .btn.primary { background: var(--accent); }
+  @keyframes fade { from { opacity: 0 } }
+  @keyframes pop { from { transform: scale(.7); opacity: 0 } }
+  .confetti { position: fixed; top: -12px; width: 10px; height: 14px; z-index: 11; pointer-events: none; animation: fall linear forwards; }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+
+  @media (max-width: 520px) {
+    h1 { font-size: 17px; }
+    .levels button, .btn { padding: 7px 10px; font-size: 13px; }
+    #timer { font-size: 16px; min-width: 74px; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>🧩 미로찾기</h1>
+    <div class="levels" id="levels">
+      <button data-level="easy">쉬움</button>
+      <button data-level="normal" class="active">보통</button>
+      <button data-level="hard">어려움</button>
+    </div>
+    <div class="status">
+      <div id="timer">0.0초</div>
+      <button class="btn" id="newBtn" title="새 미로 (N)">🔄 새 미로</button>
+    </div>
+  </header>
+  <div id="stage"><canvas id="maze"></canvas></div>
+  <div id="hint"><span class="pc">방향키 / WASD 로 이동 · N: 새 미로</span><span class="mo">화면을 밀거나(스와이프) 탭해서 이동</span></div>
+</div>
+
+<div id="overlay">
+  <div class="card">
+    <div class="emoji">🎉</div>
+    <h2>탈출 성공!</h2>
+    <p id="msg">축하합니다! 미로를 빠져나왔어요.</p>
+    <div class="time" id="finalTime">0.0초</div>
+    <div class="best" id="best"></div>
+    <div class="row">
+      <button class="btn primary" id="againBtn">다시 하기</button>
+      <button class="btn" id="levelUpBtn">다음 난이도 ▶</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const LEVELS = {
+    easy:   { label: '쉬움',   short: 10 },
+    normal: { label: '보통',   short: 16 },
+    hard:   { label: '어려움', short: 26 },
+  };
+  const ORDER = ['easy', 'normal', 'hard'];
+  const N = 1, E = 2, S = 4, W = 8;
+  const DIRS = {
+    up:    { dx: 0,  dy: -1, bit: N, opp: S },
+    right: { dx: 1,  dy: 0,  bit: E, opp: W },
+    down:  { dx: 0,  dy: 1,  bit: S, opp: N },
+    left:  { dx: -1, dy: 0,  bit: W, opp: E },
+  };
+
+  const canvas = document.getElementById('maze');
+  const ctx = canvas.getContext('2d');
+  const stage = document.getElementById('stage');
+  const timerEl = document.getElementById('timer');
+  const overlay = document.getElementById('overlay');
+
+  let level = 'normal';
+  try { level = localStorage.getItem('maze-level') || 'normal'; } catch (e) {}
+  if (!LEVELS[level]) level = 'normal';
+
+  let cols, rows, grid, player, exit, trail, cell, ox, oy;
+  let startTime = 0, elapsed = 0, running = false, finished = false, raf = 0;
+  let anim = null; // {fx, fy, tx, ty, t0}
+  let facing = 1;  // sheep faces right (1) or left (-1)
+
+  // ---------- Maze generation (iterative recursive backtracker) ----------
+  function generate(c, r) {
+    const g = new Uint8Array(c * r);
+    const visited = new Uint8Array(c * r);
+    const stack = [[Math.floor(Math.random() * c), Math.floor(Math.random() * r)]];
+    visited[stack[0][1] * c + stack[0][0]] = 1;
+    const keys = Object.keys(DIRS);
+    while (stack.length) {
+      const [x, y] = stack[stack.length - 1];
+      const opts = [];
+      for (const k of keys) {
+        const d = DIRS[k], nx = x + d.dx, ny = y + d.dy;
+        if (nx >= 0 && ny >= 0 && nx < c && ny < r && !visited[ny * c + nx]) opts.push(d);
+      }
+      if (!opts.length) { stack.pop(); continue; }
+      const d = opts[Math.floor(Math.random() * opts.length)];
+      const nx = x + d.dx, ny = y + d.dy;
+      g[y * c + x] |= d.bit;
+      g[ny * c + nx] |= d.opp;
+      visited[ny * c + nx] = 1;
+      stack.push([nx, ny]);
+    }
+    return g;
+  }
+
+  // ---------- Layout ----------
+  function computeSize() {
+    const rect = stage.getBoundingClientRect();
+    const w = Math.max(100, rect.width), h = Math.max(100, rect.height);
+    const short = LEVELS[level].short;
+    // Fit the grid to the screen's aspect ratio so the maze fills the screen
+    if (w >= h) { rows = short; cols = Math.max(short, Math.round(short * w / h)); }
+    else        { cols = short; rows = Math.max(short, Math.round(short * h / w)); }
+  }
+
+  function layout() {
+    const rect = stage.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    cell = Math.floor(Math.min(rect.width / cols, rect.height / rows));
+    const cw = cell * cols, ch = cell * rows;
+    canvas.style.width = cw + 'px';
+    canvas.style.height = ch + 'px';
+    canvas.width = Math.round(cw * dpr);
+    canvas.height = Math.round(ch * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ox = 0; oy = 0;
+    draw();
+  }
+
+  // ---------- Game state ----------
+  function newGame() {
+    computeSize();
+    grid = generate(cols, rows);
+    player = { x: 0, y: 0 };
+    exit = { x: cols - 1, y: rows - 1 };
+    trail = new Set(['0,0']);
+    anim = null; facing = 1;
+    running = false; finished = false; elapsed = 0;
+    cancelAnimationFrame(raf);
+    timerEl.textContent = '0.0초';
+    overlay.classList.remove('show');
+    document.querySelectorAll('#levels button').forEach(b =>
+      b.classList.toggle('active', b.dataset.level === level));
+    layout();
+  }
+
+  function canMove(x, y, d) { return (grid[y * cols + x] & d.bit) !== 0; }
+
+  function step(dirName) {
+    if (finished) return false;
+    const d = DIRS[dirName];
+    if (!canMove(player.x, player.y, d)) return false;
+    if (!running) { running = true; startTime = performance.now(); tick(); }
+    const fx = player.x, fy = player.y;
+    if (d.dx) facing = d.dx;
+    player.x += d.dx; player.y += d.dy;
+    trail.add(player.x + ',' + player.y);
+    anim = { fx, fy, tx: player.x, ty: player.y, t0: performance.now() };
+    if (player.x === exit.x && player.y === exit.y) win();
+    return true;
+  }
+
+  // Slide along a corridor until reaching a junction / dead end (used for swipes)
+  function slide(dirName) {
+    if (finished) return;
+    const d = DIRS[dirName];
+    if (!canMove(player.x, player.y, d)) return;
+    const fx = player.x, fy = player.y;
+    if (d.dx) facing = d.dx;
+    let x = player.x, y = player.y, moved = 0;
+    while (canMove(x, y, d)) {
+      x += d.dx; y += d.dy; moved++;
+      trail.add(x + ',' + y);
+      if (x === exit.x && y === exit.y) break;
+      const c = grid[y * cols + x];
+      const openings = [N, E, S, W].filter(b => c & b).length;
+      if (openings !== 2) break;          // junction or dead end
+      if (!(c & d.bit)) break;            // corridor bends: stop so control stays predictable
+    }
+    if (!running) { running = true; startTime = performance.now(); tick(); }
+    player.x = x; player.y = y;
+    anim = { fx, fy, tx: x, ty: y, t0: performance.now(), dur: Math.min(260, 70 + moved * 25) };
+    if (x === exit.x && y === exit.y) win();
+  }
+
+  function fmt(ms) { return (ms / 1000).toFixed(1) + '초'; }
+
+  function tick() {
+    if (!running) return;
+    elapsed = performance.now() - startTime;
+    timerEl.textContent = fmt(elapsed);
+    draw();
+    raf = requestAnimationFrame(tick);
+  }
+
+  function win() {
+    running = false; finished = true;
+    elapsed = performance.now() - startTime;
+    timerEl.textContent = fmt(elapsed);
+    const key = 'maze-best-' + level;
+    let best = null;
+    try { best = parseFloat(localStorage.getItem(key)); } catch (e) {}
+    const isRecord = !best || elapsed < best;
+    if (isRecord) { try { localStorage.setItem(key, String(elapsed)); } catch (e) {} }
+    const msgs = ['훌륭해요! 길치 탈출 성공!', '대단해요! 미로 마스터네요!', '멋져요! 출구를 찾아냈어요!', '축하합니다! 완벽한 탈출이에요!'];
+    document.getElementById('msg').textContent =
+      `[${LEVELS[level].label}] ` + msgs[Math.floor(Math.random() * msgs.length)];
+    document.getElementById('finalTime').textContent = fmt(elapsed);
+    document.getElementById('best').textContent = isRecord
+      ? (best ? '🏆 새로운 최고 기록!' : '🏆 첫 기록 달성!')
+      : `최고 기록: ${fmt(best)}`;
+    const lvBtn = document.getElementById('levelUpBtn');
+    lvBtn.style.display = level === 'hard' ? 'none' : '';
+    const finish = () => { draw(); overlay.classList.add('show'); confetti(); };
+    setTimeout(finish, 220);
+  }
+
+  function confetti() {
+    const colors = ['#ffcc33', '#38e08c', '#7c8cff', '#ff6b8b', '#4fd1ff'];
+    for (let i = 0; i < 60; i++) {
+      const el = document.createElement('div');
+      el.className = 'confetti';
+      el.style.left = Math.random() * 100 + 'vw';
+      el.style.background = colors[i % colors.length];
+      el.style.animationDuration = (1.8 + Math.random() * 1.8) + 's';
+      el.style.animationDelay = (Math.random() * 0.4) + 's';
+      el.style.borderRadius = Math.random() > .5 ? '50%' : '2px';
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 4200);
+    }
+  }
+
+  // ---------- Drawing ----------
+  // Sheep drawn with canvas shapes (s = overall size in px, dir = 1 facing right / -1 facing left)
+  function drawSheep(x, y, s, dir) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(dir * s / 100, s / 100); // draw in a 100x100 box centred on 0,0
+    // soft glow so the sheep stands out on the floor
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.35)';
+    ctx.shadowBlur = 8;
+    // legs
+    ctx.fillStyle = '#3a3340';
+    for (const lx of [-24, -10, 10, 22]) {
+      ctx.beginPath(); ctx.roundRect(lx - 4, 14, 8, 26, 4); ctx.fill();
+    }
+    // fluffy wool body: grey silhouette first (acts as outline), white puffs on top
+    const puffs = [[-26, 0, 17], [-12, -14, 17], [6, -16, 17], [20, -4, 15], [14, 12, 16], [-6, 14, 17], [-24, 12, 14], [-4, 0, 20]];
+    const wool = grow => {
+      ctx.beginPath();
+      for (const [px, py, r] of puffs) { ctx.moveTo(px + r + grow, py); ctx.arc(px, py, r + grow, 0, Math.PI * 2); }
+      ctx.fill();
+    };
+    ctx.fillStyle = '#b9bdd8';
+    wool(2.5);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffffff';
+    wool(0);
+    // head
+    ctx.fillStyle = '#3a3340';
+    ctx.beginPath(); ctx.ellipse(32, -8, 14, 17, 0.25, 0, Math.PI * 2); ctx.fill();
+    // ears
+    ctx.beginPath(); ctx.ellipse(20, -20, 9, 4.5, -0.6, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(44, -20, 9, 4.5, 0.6, 0, Math.PI * 2); ctx.fill();
+    // wool tuft on top of head
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(27, -23, 6.5, 0, Math.PI * 2); ctx.arc(35, -25, 6.5, 0, Math.PI * 2);
+    ctx.fill();
+    // eyes
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.arc(28, -9, 4.5, 0, Math.PI * 2); ctx.arc(39, -9, 4.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#111';
+    ctx.beginPath(); ctx.arc(29.5, -8.5, 2.3, 0, Math.PI * 2); ctx.arc(40.5, -8.5, 2.3, 0, Math.PI * 2); ctx.fill();
+    // blush
+    ctx.fillStyle = 'rgba(255, 140, 170, 0.7)';
+    ctx.beginPath(); ctx.arc(34, 3, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  function draw() {
+    const w = cell * cols, h = cell * rows;
+    const css = getComputedStyle(document.documentElement);
+    ctx.fillStyle = css.getPropertyValue('--floor');
+    ctx.fillRect(0, 0, w, h);
+
+    // trail
+    ctx.fillStyle = css.getPropertyValue('--trail');
+    trail.forEach(k => {
+      const [x, y] = k.split(',').map(Number);
+      ctx.fillRect(x * cell, y * cell, cell, cell);
+    });
+
+    // exit
+    const ex = exit.x * cell, ey = exit.y * cell;
+    const pulse = 0.75 + 0.25 * Math.sin(performance.now() / 250);
+    ctx.fillStyle = css.getPropertyValue('--exit');
+    ctx.globalAlpha = pulse;
+    ctx.fillRect(ex + 2, ey + 2, cell - 4, cell - 4);
+    ctx.globalAlpha = 1;
+    if (cell >= 16) {
+      ctx.font = `${Math.floor(cell * 0.6)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('🏁', ex + cell / 2, ey + cell / 2 + 1);
+    }
+
+    // walls
+    const lw = Math.max(2, Math.round(cell / 7));
+    ctx.strokeStyle = css.getPropertyValue('--wall');
+    ctx.lineWidth = lw;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        const c = grid[y * cols + x], px = x * cell, py = y * cell;
+        if (!(c & N)) { ctx.moveTo(px, py); ctx.lineTo(px + cell, py); }
+        if (!(c & W)) { ctx.moveTo(px, py); ctx.lineTo(px, py + cell); }
+        if (y === rows - 1 && !(c & S)) { ctx.moveTo(px, py + cell); ctx.lineTo(px + cell, py + cell); }
+        if (x === cols - 1 && !(c & E)) { ctx.moveTo(px + cell, py); ctx.lineTo(px + cell, py + cell); }
+      }
+    }
+    ctx.stroke();
+    // outer frame inset so edge walls are fully visible
+    ctx.strokeRect(lw / 2, lw / 2, w - lw, h - lw);
+
+    // player (animated)
+    let px = player.x, py = player.y, animating = false;
+    if (anim) {
+      const dur = anim.dur || 90;
+      const t = Math.min(1, (performance.now() - anim.t0) / dur);
+      const e = 1 - Math.pow(1 - t, 3);
+      px = anim.fx + (anim.tx - anim.fx) * e;
+      py = anim.fy + (anim.ty - anim.fy) * e;
+      if (t >= 1) anim = null; else animating = true;
+    }
+    const cx = px * cell + cell / 2, cy = py * cell + cell / 2;
+    // little hop while moving
+    const hop = animating ? Math.sin(Math.min(1, (performance.now() - anim.t0) / (anim.dur || 90)) * Math.PI) * cell * 0.08 : 0;
+    drawSheep(cx, cy - hop, cell * 0.9, facing);
+
+    if (!running && (animating || !finished)) {
+      // keep exit pulsing & animation smooth while idle
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(draw);
+    }
+  }
+
+  // ---------- Input: keyboard ----------
+  const KEYMAP = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    w: 'up', s: 'down', a: 'left', d: 'right', W: 'up', S: 'down', A: 'left', D: 'right',
+  };
+  window.addEventListener('keydown', e => {
+    if (overlay.classList.contains('show')) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); newGame(); }
+      return;
+    }
+    if (e.key === 'n' || e.key === 'N') { newGame(); return; }
+    const dir = KEYMAP[e.key];
+    if (dir) { e.preventDefault(); step(dir); }
+  });
+
+  // ---------- Input: touch (swipe = slide to next junction, drag = continuous) ----------
+  let touch = null;
+  const SWIPE = 18;
+  stage.addEventListener('pointerdown', e => {
+    touch = { x: e.clientX, y: e.clientY, moved: false };
+    stage.setPointerCapture(e.pointerId);
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!touch) return;
+    const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
+    const dist = Math.max(Math.abs(dx), Math.abs(dy));
+    // Continuous drag: each "cell-ish" distance moves one step, so you can steer around corners
+    const thresh = Math.max(SWIPE, Math.min(cell * 0.9, 40));
+    if (dist >= thresh) {
+      const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+      if (!touch.moved) { slide(dir); }
+      else { step(dir); }
+      touch.moved = true;
+      touch.x = e.clientX; touch.y = e.clientY;
+    }
+  });
+  const endTouch = e => {
+    if (touch && !touch.moved) {
+      // Tap: move one step toward the tapped point relative to the player
+      const rect = canvas.getBoundingClientRect();
+      const tx = e.clientX - rect.left - (player.x + .5) * cell;
+      const ty = e.clientY - rect.top - (player.y + .5) * cell;
+      if (Math.max(Math.abs(tx), Math.abs(ty)) > cell * 0.5) {
+        const dir = Math.abs(tx) > Math.abs(ty) ? (tx > 0 ? 'right' : 'left') : (ty > 0 ? 'down' : 'up');
+        step(dir);
+      }
+    }
+    touch = null;
+  };
+  stage.addEventListener('pointerup', endTouch);
+  stage.addEventListener('pointercancel', () => { touch = null; });
+  document.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  document.addEventListener('dblclick', e => e.preventDefault());
+
+  // ---------- UI ----------
+  document.getElementById('levels').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    level = b.dataset.level;
+    try { localStorage.setItem('maze-level', level); } catch (err) {}
+    newGame();
+  });
+  document.getElementById('newBtn').addEventListener('click', newGame);
+  document.getElementById('againBtn').addEventListener('click', newGame);
+  document.getElementById('levelUpBtn').addEventListener('click', () => {
+    level = ORDER[Math.min(ORDER.length - 1, ORDER.indexOf(level) + 1)];
+    try { localStorage.setItem('maze-level', level); } catch (err) {}
+    newGame();
+  });
+
+  let resizeT;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeT);
+    resizeT = setTimeout(() => {
+      // Regenerate only if the game hasn't started; otherwise just rescale
+      if (!running && !finished && trail.size === 1) newGame(); else layout();
+    }, 150);
+  });
+
+  newGame();
+
+  // test hook
+  window.__maze = { get state() { return { cols, rows, player, exit, finished, running }; }, grid: () => grid, step };
+})();
+</script>
+</body>
+</html>
